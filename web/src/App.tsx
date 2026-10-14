@@ -1,7 +1,12 @@
 
-import { useState } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
-import L from 'leaflet'
+import { useEffect, useState } from 'react'
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  useMap,
+} from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
 
@@ -17,48 +22,31 @@ type Station = {
   available: boolean
 }
 
-const stations: Station[] = [
-  {
-    id: 1,
-    name: 'ESSDRIVE Demo Station 01',
-    city: 'București',
-    lat: 44.4268,
-    lng: 26.1025,
-    power: 150,
-    connector: 'CCS2',
-    price: 2.25,
-    available: true,
-  },
-  {
-    id: 2,
-    name: 'ESSDRIVE Demo Station 02',
-    city: 'Cluj-Napoca',
-    lat: 46.7712,
-    lng: 23.6236,
-    power: 50,
-    connector: 'CCS2',
-    price: 1.95,
-    available: true,
-  },
-  {
-    id: 3,
-    name: 'ESSDRIVE Demo Station 03',
-    city: 'Timișoara',
-    lat: 45.7489,
-    lng: 21.2087,
-    power: 22,
-    connector: 'Type 2',
-    price: 1.75,
-    available: false,
-  },
-]
+type ApiStation = {
+  id: number
+  name: string
+  city: string
+  latitude: number
+  longitude: number
+  power_kw: number
+  connector: string
+  price_ron_kwh: number
+  available: boolean
+}
+
+type StationsResponse = {
+  count: number
+  stations: ApiStation[]
+}
 
 function MapFocus({ station }: { station: Station | null }) {
   const map = useMap()
 
-  if (station) {
-    map.flyTo([station.lat, station.lng], 12, { duration: 0.8 })
-  }
+  useEffect(() => {
+    if (station) {
+      map.flyTo([station.lat, station.lng], 12, { duration: 0.8 })
+    }
+  }, [station, map])
 
   return null
 }
@@ -66,6 +54,62 @@ function MapFocus({ station }: { station: Station | null }) {
 function App() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Station | null>(null)
+  const [stations, setStations] = useState<Station[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadStations() {
+      try {
+        setLoading(true)
+        setError('')
+
+        const response = await fetch(
+          'http://localhost:8000/api/v1/stations',
+          { signal: controller.signal },
+        )
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`)
+        }
+
+        const data: StationsResponse = await response.json()
+
+        const mappedStations: Station[] = data.stations.map((station) => ({
+          id: station.id,
+          name: station.name,
+          city: station.city,
+          lat: station.latitude,
+          lng: station.longitude,
+          power: station.power_kw,
+          connector: station.connector,
+          price: station.price_ron_kwh,
+          available: station.available,
+        }))
+
+        setStations(mappedStations)
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          return
+        }
+
+        console.error('Failed to load stations:', err)
+        setError(
+          'Nu am putut încărca stațiile. Verifică dacă backend-ul FastAPI rulează.',
+        )
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadStations()
+
+    return () => controller.abort()
+  }, [])
 
   const filteredStations = stations.filter((station) =>
     `${station.name} ${station.city} ${station.connector}`
@@ -78,7 +122,10 @@ function App() {
       <header className="topbar">
         <a className="brand" href="#">ESS<span>DRIVE</span></a>
         <span className="demo-label">EMP · DEMO</span>
-        <button className="login-button" onClick={() => alert('Autentificarea va fi adăugată ulterior.')}>
+        <button
+          className="login-button"
+          onClick={() => alert('Autentificarea va fi adăugată ulterior.')}
+        >
           Sign in
         </button>
       </header>
@@ -88,7 +135,9 @@ function App() {
           <span className="eyebrow">ELECTRIC MOBILITY</span>
           <h1>Charge smarter.<br />Drive further.</h1>
           <p>Find charging stations and explore electric mobility with ESSDRIVE.</p>
-          <a className="primary-button" href="#stations">Explore charging stations ↓</a>
+          <a className="primary-button" href="#stations">
+            Explore charging stations ↓
+          </a>
         </div>
         <div className="hero-visual">
           <div className="visual-circle">
@@ -105,7 +154,9 @@ function App() {
             <h2>Charging stations</h2>
             <p>Select a map marker or a station card to view its details.</p>
           </div>
-          <span className="station-count">{filteredStations.length} stations</span>
+          <span className="station-count">
+            {loading ? 'Loading stations…' : `${filteredStations.length} stations`}
+          </span>
         </div>
 
         <input
@@ -116,6 +167,13 @@ function App() {
           onChange={(event) => setSearch(event.target.value)}
           aria-label="Search charging stations"
         />
+
+        {loading && <p>Loading charging stations from ESSDRIVE API…</p>}
+        {error && <p role="alert">{error}</p>}
+
+        {!loading && !error && stations.length === 0 && (
+          <p>No stations are currently returned by the API.</p>
+        )}
 
         <div className="map-layout">
           <div className="map-frame">
@@ -177,13 +235,21 @@ function App() {
                 </span>
               </button>
             ))}
-            <p className="map-disclaimer">*Simulated status. These are demo locations, not verified charging stations.</p>
+            <p className="map-disclaimer">
+              *Simulated status. These are demo locations, not verified charging stations.
+            </p>
           </aside>
         </div>
 
         {selected && (
           <section className="selected-station">
-            <button className="close-button" onClick={() => setSelected(null)} aria-label="Close details">×</button>
+            <button
+              className="close-button"
+              onClick={() => setSelected(null)}
+              aria-label="Close details"
+            >
+              ×
+            </button>
             <span className="eyebrow">SELECTED STATION · DEMO</span>
             <h3>{selected.name}</h3>
             <p>{selected.city}, Romania</p>
@@ -192,7 +258,9 @@ function App() {
               <span>{selected.connector}</span>
               <span>{selected.price.toFixed(2)} RON/kWh</span>
             </div>
-            <p className="demo-notice">Demo only. No real charging session or payment can be started.</p>
+            <p className="demo-notice">
+              Demo only. No real charging session or payment can be started.
+            </p>
           </section>
         )}
 
@@ -212,4 +280,3 @@ function App() {
 }
 
 export default App
-
